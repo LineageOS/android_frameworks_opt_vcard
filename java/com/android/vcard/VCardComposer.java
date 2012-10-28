@@ -632,6 +632,10 @@ public class VCardComposer {
         }
     }
 
+    protected Cursor getCursor() {
+        return mCursor;
+    }
+
     /**
      * @return returns the number of available entities. The return value is undefined
      * when this object is not ready yet (typically when {{@link #init()} is not called

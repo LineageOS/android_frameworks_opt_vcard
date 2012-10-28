@@ -256,7 +256,7 @@ public class VCardBuilder {
                 TextUtils.isEmpty(displayName));
     }
 
-    private ContentValues getPrimaryContentValueWithStructuredName(
+    protected ContentValues getPrimaryContentValueWithStructuredName(
             final List<ContentValues> contentValuesList) {
         ContentValues primaryContentValues = null;
         ContentValues subprimaryContentValues = null;
