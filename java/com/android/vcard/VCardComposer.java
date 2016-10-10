@@ -139,6 +139,8 @@ public class VCardComposer {
     private boolean mFirstVCardEmittedInDoCoMoCase;
 
     private Cursor mCursor;
+    private EntityIterator mEntityIterator;
+    private Entity mEntity;
     private boolean mCursorSuppliedFromOutside;
     private int mIdColumn;
     private Uri mContentUriForRawContactsEntity;
@@ -366,6 +368,8 @@ public class VCardComposer {
         if (!initInterMainPart()) {
             return false;
         }
+        initEntityIterator();
+
         return initInterLastPart();
     }
 
@@ -439,6 +443,22 @@ public class VCardComposer {
         return mIdColumn >= 0;
     }
 
+    private void initEntityIterator() {
+        StringBuilder selection = new StringBuilder();
+        selection.append(Data.CONTACT_ID).append(" IN (");
+        do {
+            selection.append(mCursor.getString(mIdColumn));
+            if (!mCursor.isLast()) {
+                selection.append(",");
+            }
+        } while (mCursor.moveToNext());
+        selection.append(")");
+        mEntityIterator = RawContacts
+                .newEntityIterator(mContentResolver.query(mContentUriForRawContactsEntity, null,
+                        selection.toString(), null, Data.CONTACT_ID));
+        mCursor.moveToFirst();
+    }
+
     private boolean initInterLastPart() {
         mInitDone = true;
         mTerminateCalled = false;
@@ -465,8 +485,9 @@ public class VCardComposer {
             // return createOneEntryInternal("-1", getEntityIteratorMethod);
         }
 
-        final String vcard = createOneEntryInternal(mCursor.getLong(mIdColumn),
-                getEntityIteratorMethod);
+        final String vcard = (mEntityIterator == null || getEntityIteratorMethod != null)
+                ?createOneEntryInternal(mCursor.getLong(mIdColumn),getEntityIteratorMethod)
+                        :createOneEntryInternalByIterator();
         if (!mCursor.moveToNext()) {
             Log.e(LOG_TAG, "Cursor#moveToNext() returned false");
         }
@@ -496,6 +517,57 @@ public class VCardComposer {
         * @return RawContactEntitlesInfo that ready to process.
         */
         RawContactEntitlesInfo getRawContactEntitlesInfo(long contactId);
+    }
+
+    private String createOneEntryInternalByIterator() {
+        if (!mEntityIterator.hasNext()) {
+            if (mEntity == null) {
+                Log.e(LOG_TAG, "EntityIterator#hasNext() returned false");
+                return null;
+            }
+        }
+        final Map<String, List<ContentValues>> contentValuesListMap = new HashMap<String, List<ContentValues>>();
+        int lastContactId = -1;
+        if (mEntity != null) {
+            lastContactId = mEntity.getEntityValues().getAsInteger(Data.CONTACT_ID);
+            for (NamedContentValues namedContentValues : mEntity.getSubValues()) {
+                ContentValues contentValues = namedContentValues.values;
+                String key = contentValues.getAsString(Data.MIMETYPE);
+                if (key != null) {
+                    List<ContentValues> contentValuesList = contentValuesListMap.get(key);
+                    if (contentValuesList == null) {
+                        contentValuesList = new ArrayList<ContentValues>();
+                        contentValuesListMap.put(key, contentValuesList);
+                    }
+                    contentValuesList.add(contentValues);
+                }
+            }
+            mEntity = null;
+        }
+        while (mEntityIterator.hasNext()) {
+            Entity entity = mEntityIterator.next();
+            int contactId = entity.getEntityValues().getAsInteger(Data.CONTACT_ID);
+            if ((lastContactId == -1 || contactId == lastContactId)) {
+                for (NamedContentValues namedContentValues : entity.getSubValues()) {
+                    ContentValues contentValues = namedContentValues.values;
+                    String key = contentValues.getAsString(Data.MIMETYPE);
+                    if (key != null) {
+                        List<ContentValues> contentValuesList = contentValuesListMap.get(key);
+                        if (contentValuesList == null) {
+                            contentValuesList = new ArrayList<ContentValues>();
+                            contentValuesListMap.put(key, contentValuesList);
+                        }
+                        contentValuesList.add(contentValues);
+                    }
+                }
+                lastContactId = contactId;
+            } else {
+                lastContactId = contactId;
+                mEntity = entity;
+                break;
+            }
+        }
+        return buildVCard(contentValuesListMap);
     }
 
     private String createOneEntryInternal(long contactId,
@@ -633,6 +705,14 @@ public class VCardComposer {
             }
             mCursor = null;
         }
+        if(mEntityIterator != null){
+            try{
+                mEntityIterator.close();
+            } catch (SQLiteException e) {
+                Log.e(LOG_TAG, "SQLiteException on EntityIterator#close(): " + e.getMessage());
+            }
+            mEntityIterator = null;
+        }
     }
 
     @Override
@@ -667,6 +747,9 @@ public class VCardComposer {
         if (mCursor == null) {
             Log.w(LOG_TAG, "This object is not ready yet.");
             return false;
+        }
+        if(mEntityIterator != null){
+            return ((!mEntityIterator.hasNext()) && mEntity == null) || mCursor.isAfterLast();
         }
         return mCursor.isAfterLast();
     }
